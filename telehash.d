@@ -121,15 +121,27 @@ struct Identity {
     rsa_keys = rsa_load_keys(publicKeyPath.toStringz(), privateKeyPath.toStringz());
   }
 
+  string hashname() {
+    ubyte[] publicKey = new ubyte[rsa_keys.DERpublicKeyLength()];
+    rsa_keys.DERpublicKey(publicKey.ptr, publicKey.length);
+    writefln("HASH KEY %(%02x%)", publicKey);
+    ubyte hashedKey[32];
+    sha256(publicKey.ptr, publicKey.length, hashedKey.ptr);
+    auto hashWriter = appender!string();
+    formattedWrite(hashWriter, "%(%02x%)", hashedKey);
+    return hashWriter.data;
+  }
+
   cryptopp.RSA rsa_keys;
-  string network;
+  Address address;
 }
 
 class Socket : UdpSocket {
   void doRead(EvLoop* loop, EventFlags flags) {
     auto pkt = new Packet;
 
-    pkt.rawLength = receiveFrom(pkt.raw);
+    Address remote;
+    pkt.rawLength = receiveFrom(pkt.raw, remote);
     pkt.raw = pkt.raw[0..pkt.rawLength];
 
     try {
@@ -140,11 +152,12 @@ class Socket : UdpSocket {
       return;
     }
 
+    writefln("Incoming isOpen(%d)", isOpen);
     if (!isOpen && (pkt.json["type"].type == Json.Type.Undefined || pkt.json["type"].get!string() != "open")) {
       writeln("Invalid packet, not opened.");
       delete pkt;
       return;
-    } else {
+    } else if (!isOpen) {
       // Get the ecc public key and decrypt it
       string open = pkt.json["open"].get!string();
       ubyte[] decoded = Base64.decode(open);
@@ -195,7 +208,9 @@ class Socket : UdpSocket {
         return;
       }
 
+      writefln("KEY: %(%02x%)", innerPkt.rawBody);
       Identity sender_identity = Identity(innerPkt.rawBody);
+      sender_identity.address = remote;
 
       // Verify the RSA signature in the sig
       //std.stdio.writeln("Encrypted Body: ", encryptedBody.length, " : ", encryptedBody);
@@ -219,7 +234,8 @@ class Socket : UdpSocket {
       isOpen = true;
     }
 
-    if (isOpen && pkt.json["type"].get!string() != "line") {
+    writeln(pkt.json);
+    if (isOpen && pkt.json["type"].type == Json.Type.Undefined && pkt.json["type"].get!string() != "line") {
       writeln("Received non line packet on open socket.");
       delete pkt;
       return;
@@ -231,6 +247,7 @@ class Socket : UdpSocket {
 
     }
     */
+    writeln("NORMAL HANDLE!");
     handleData(pkt);
   }
 
@@ -242,19 +259,18 @@ class Socket : UdpSocket {
     Packet pkt = new Packet;
 
     pkt.json["type"] = "open";
-    ubyte[] openEncrypted = new ubyte[identity.rsa_keys.encryptLength(dh.publicKeyLength)];
-    identity.rsa_keys.encrypt(dh.publicKey, dh.publicKeyLength, openEncrypted.ptr);
+    ubyte[] openEncrypted = new ubyte[to.rsa_keys.encryptLength(dh.publicKeyLength)];
+    to.rsa_keys.encrypt(dh.publicKey, dh.publicKeyLength, openEncrypted.ptr);
     pkt.json["open"] = Base64.encode(openEncrypted);
-    std.stdio.writeln(pkt.json);
     
     Packet innerPkt = new Packet;
-    innerPkt.json["to"] = "abcd"; // TODO:  Make this a network/family hash?
+    innerPkt.json["to"] = to.hashname;
     auto currentTime = Clock.currTime();
     innerPkt.json["at"] = currentTime.toUnixTime() * 1000;
     ubyte line[16];
-    CryptoPP.randomBytes(line.ptr, 16);
+    cryptopp.randomBytes(line.ptr, 16);
     auto lineWriter = appender!string();
-    formattedWrite(lineWriter, "%(%x%)", line);
+    formattedWrite(lineWriter, "%(%02x%)", line);
     innerPkt.json["line"] = lineWriter.data;
     ubyte[] publicKey = new ubyte[identity.rsa_keys.DERpublicKeyLength()];
     identity.rsa_keys.DERpublicKey(publicKey.ptr, publicKey.length);
@@ -264,17 +280,24 @@ class Socket : UdpSocket {
     pkt.rawBody = innerPkt.raw;
 
     ubyte iv[16];
-    CryptoPP.randomBytes(iv.ptr, 16);
+    cryptopp.randomBytes(iv.ptr, 16);
     auto ivWriter = appender!string();
-    formattedWrite(ivWriter, "%(%x%)", iv);
+    writeln(iv);
+    formattedWrite(ivWriter, "%(%02x%)", iv);
     pkt.json.iv = ivWriter.data;
     ubyte dhKeyHash[32];
     sha256(dh.publicKey, dh.publicKeyLength, dhKeyHash.ptr);
     pkt.encrypt(dhKeyHash, iv[0..16]);
 
+    ubyte[] sig = new ubyte[identity.rsa_keys.signatureLength];
+    identity.rsa_keys.sign(pkt.rawBody.ptr, pkt.rawBody.length, sig.ptr);
+    pkt.json["sig"] = Base64.encode(sig);
+
     pkt.encode();
 
-    // TODO:  Sign it
+    sendTo(pkt.raw, to.address);
+
+    writeln("CRAP ", pkt.json);
   }
 
   @property bool isOpen() { return socketIsOpen; }

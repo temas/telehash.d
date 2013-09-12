@@ -66,7 +66,7 @@ public:
   }
 
   virtual size_t encryptLength(size_t plaintextLength) {
-    RSAES< OAEP<SHA> >::Encryptor encryptor(keys.privateKey);
+    RSAES< OAEP<SHA> >::Encryptor encryptor(keys.publicKey);
     return encryptor.CiphertextLength(plaintextLength);
   }
 
@@ -109,15 +109,13 @@ public:
 
   virtual size_t DERpublicKeyLength() {
     CryptoPP::ByteQueue bytes;
-    keys.publicKey.DEREncodePublicKey(bytes);
+    keys.publicKey.DEREncode(bytes);
     return bytes.MaxRetrievable();
   }
 
   virtual void DERpublicKey(byte* publicKey, size_t publicKeyLength) {
-    CryptoPP::ByteQueue bytes;
-    keys.publicKey.DEREncodePublicKey(bytes);
     CryptoPP::ArraySink out(publicKey, publicKeyLength);
-    bytes.TransferTo(out);
+    keys.publicKey.DEREncode(out);
     out.MessageEnd();
   }
 

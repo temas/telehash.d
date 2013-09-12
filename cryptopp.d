@@ -31,5 +31,6 @@ extern (C) {
   void sha256(ubyte* message, ulong messageLength, ubyte* hash);
   void aes_256_ctr_encrypt(ubyte* plaintext, ulong plaintext_len, ubyte* encrypted, ubyte* key, ubyte* iv);
   void aes_256_ctr_decrypt(ubyte* encrypted, ulong encrypted_len, ubyte* plaintext, ubyte* key, ubyte* iv);
+  void randomBytes(ubyte* dest, ulong length);
 }
 
