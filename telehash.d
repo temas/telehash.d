@@ -46,21 +46,21 @@ class Packet {
   }
 
   void parse() {
-    writeln("Full buffer: ", raw);
+    //writeln("Full buffer: ", raw);
     if (rawLength <= 2) {
       throw new Exception("Packet is too short");
     }
 
     //ubyte[] raw = pkt.raw;
     ushort jsonLen = raw.read!ushort();
-    writeln("Read len of ", jsonLen, " total is ", rawLength, " in ", raw.length);
+    //writeln("Read len of ", jsonLen, " total is ", rawLength, " in ", raw.length);
 
     auto jsonStr = raw[0..jsonLen];
     rawBody = raw[jsonLen..rawLength - 2];
 
-    writeln("json str: ", cast(string)jsonStr);
-    writeln("raw length ", rawBody.length);
-    writeln("raw buffer: ", rawBody);
+    //writeln("json str: ", cast(string)jsonStr);
+    //writeln("raw length ", rawBody.length);
+    //writeln("raw buffer: ", rawBody);
     json = parseJson(jsonStr); // This is caught up a layer if it throws
     // We have to have a top level object, otherwise it's junk
     if (json.type != Json.Type.Object) {
@@ -124,7 +124,7 @@ struct Identity {
   string hashname() {
     ubyte[] publicKey = new ubyte[rsa_keys.DERpublicKeyLength()];
     rsa_keys.DERpublicKey(publicKey.ptr, publicKey.length);
-    writefln("HASH KEY %(%02x%)", publicKey);
+    //writefln("HASH KEY %(%02x%)", publicKey);
     ubyte hashedKey[32];
     sha256(publicKey.ptr, publicKey.length, hashedKey.ptr);
     auto hashWriter = appender!string();
@@ -152,7 +152,7 @@ class Socket : UdpSocket {
       return;
     }
 
-    writefln("Incoming isOpen(%d)", isOpen);
+    //writefln("Incoming isOpen(%d)", isOpen);
     if (!isOpen && (pkt.json["type"].type == Json.Type.Undefined || pkt.json["type"].get!string() != "open")) {
       writeln("Invalid packet, not opened.");
       delete pkt;
@@ -166,30 +166,29 @@ class Socket : UdpSocket {
       ulong outLength = identity.rsa_keys.decrypt(decoded.ptr, decoded.length, outKey.ptr);
       outKey = outKey[0..outLength];
 
-      std.stdio.writefln("Key is %d %(%#x %)", outKey.length, outKey);
+      //writefln("Key is %d %(%#x %)", outKey.length, outKey);
 
       // Setup a new diffie-hellman environment and generate ephemeral keys
       ECDH dh = start_ecdh();
       ubyte[] publicKey = new ubyte[dh.publicKeyLength];
         
       // agree on the shared secret
-      std.stdio.writeln("public key length ", dh.publicKeyLength);
-      std.stdio.writeln("Public key ", Base64.encode(dh.publicKey[0..dh.publicKeyLength]));
+      //writeln("public key length ", dh.publicKeyLength);
+      //writeln("Public key ", Base64.encode(dh.publicKey[0..dh.publicKeyLength]));
       ubyte[] secret = new ubyte[dh.agreedValueLength];
       dh.agree(secret.ptr, outKey.ptr);
 
-      std.stdio.writeln("secret: ", secret);
+      //writefln("secret: %(%02x%)", secret);
 
       // Decrypt the body and build another packet off it
       ubyte iv[16];
       string ivStr = pkt.json.iv.get!string;
       foreach(size_t i; 0..iv.length) {
-        string curSlice = ivStr[2*i..2*(i+1)];
-        curSlice.formattedRead("%x", &iv[i]);
+        iv[i] = ivStr[2*i..2*(i+1)].to!ubyte(16);
       }
       ubyte innerSecret[32];
       cryptopp.sha256(outKey.ptr, outKey.length, innerSecret.ptr);
-      std.stdio.writeln(pkt.rawBody);
+      //writeln(pkt.rawBody);
       ubyte[] encryptedBody = pkt.rawBody.dup;
       pkt.decrypt(innerSecret, iv);
       //writefln("Decrypted is %(%c %)", cast(char[])pkt.rawBody[2..$]);
@@ -208,7 +207,7 @@ class Socket : UdpSocket {
         return;
       }
 
-      writefln("KEY: %(%02x%)", innerPkt.rawBody);
+      //writefln("KEY: %(%02x%)", innerPkt.rawBody);
       Identity sender_identity = Identity(innerPkt.rawBody);
       sender_identity.address = remote;
 
@@ -225,16 +224,38 @@ class Socket : UdpSocket {
         writeln("We agreed!");
       }
 
-      // Get our aes key setup now that we're all set
-      // TODO:  Sha256 the line and shared secret
-
       // Send back an open so we can all agree on things
       sendOpen(sender_identity, dh);
 
+      // Get our aes key setup now that we're all set
+      // TODO:  Sha256 the line and shared secret
+      string inLine = innerPkt.json["line"].get!string;
+      //writeln("inline ", inLine);
+      for (int i = 0; i < 16; ++i) {
+        incomingLine[i] = inLine[2*i..2*(i+1)].to!ubyte(16);
+      }
+      
+      ubyte[] keyMaterial = new ubyte[32 + secret.length];
+      keyMaterial[0..secret.length] = secret;
+      keyMaterial[$-32..$-16] = outgoingLine;
+      keyMaterial[$-16..$] = incomingLine;
+      //writefln("KeyMaterial %(%02x %) ", keyMaterial);
+      sha256(keyMaterial.ptr, keyMaterial.length, encryptor_key.ptr);
+
+      //writefln("Encryptor key is %(%02x %)", encryptor_key);
+
+      keyMaterial[$-32..$-16] = incomingLine;
+      keyMaterial[$-16..$] = outgoingLine;
+      sha256(keyMaterial.ptr, keyMaterial.length, decryptor_key.ptr);
+
+      //writefln("Decryptor key is %(%02x %)", decryptor_key);
+
       isOpen = true;
+
+      return;
     }
 
-    writeln(pkt.json);
+    //writeln(pkt.json);
     if (isOpen && pkt.json["type"].type == Json.Type.Undefined && pkt.json["type"].get!string() != "line") {
       writeln("Received non line packet on open socket.");
       delete pkt;
@@ -247,7 +268,22 @@ class Socket : UdpSocket {
 
     }
     */
-    writeln("NORMAL HANDLE!");
+    writeln("NORMAL HANDLE ", pkt.json);
+    // XXX TODO:  Check the line and discard if mismatched
+    string ivStr = pkt.json["iv"].get!string;
+    ubyte curIv[16];
+    for (int i = 0; i < 16; ++i) {
+      curIv[i] = ivStr[2*i..2*(i+1)].to!ubyte(16);
+    }
+    pkt.decrypt(decryptor_key, curIv);
+
+    //writeln(pkt.rawBody);
+    Packet innerPkt = new Packet;
+    innerPkt.raw = pkt.rawBody;
+    innerPkt.rawLength = pkt.rawBody.length;
+    innerPkt.parse();
+    writeln("Decrypted packet ", innerPkt.json);
+
     handleData(pkt);
   }
 
@@ -269,6 +305,7 @@ class Socket : UdpSocket {
     innerPkt.json["at"] = currentTime.toUnixTime() * 1000;
     ubyte line[16];
     cryptopp.randomBytes(line.ptr, 16);
+    outgoingLine = line;
     auto lineWriter = appender!string();
     formattedWrite(lineWriter, "%(%02x%)", line);
     innerPkt.json["line"] = lineWriter.data;
@@ -282,7 +319,7 @@ class Socket : UdpSocket {
     ubyte iv[16];
     cryptopp.randomBytes(iv.ptr, 16);
     auto ivWriter = appender!string();
-    writeln(iv);
+    //writeln(iv);
     formattedWrite(ivWriter, "%(%02x%)", iv);
     pkt.json.iv = ivWriter.data;
     ubyte dhKeyHash[32];
@@ -296,8 +333,6 @@ class Socket : UdpSocket {
     pkt.encode();
 
     sendTo(pkt.raw, to.address);
-
-    writeln("CRAP ", pkt.json);
   }
 
   @property bool isOpen() { return socketIsOpen; }
@@ -312,8 +347,8 @@ private:
 
   ubyte[32] encryptor_key;
   ubyte[32] decryptor_key;
-  ubyte[20] line_to;
-  ubyte[20] line_from;
+  ubyte[16] outgoingLine;
+  ubyte[16] incomingLine;
 }
 
 void main() {

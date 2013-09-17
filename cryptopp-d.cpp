@@ -171,7 +171,7 @@ public:
 
   virtual void generateKeys() {
     AutoSeededRandomPool rng;
-    domain.AccessGroupParameters().SetPointCompression(true);
+    //domain.AccessGroupParameters().SetPointCompression(true);
     privateKey_ = new byte[domain.PrivateKeyLength()];
     publicKey_ = new byte[domain.PublicKeyLength()];
     domain.GenerateKeyPair(rng, privateKey_, publicKey_);
@@ -188,7 +188,6 @@ public:
   }
 
   virtual void agree(byte* agreedValue, byte* remotePublicKey) {
-    printf("Private key length is %d\n", domain.PrivateKeyLength());
     if (!domain.Agree(agreedValue, privateKey_, remotePublicKey)) {
       printf("Error agreeing\n");
     }
